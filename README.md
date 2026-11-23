@@ -138,6 +138,8 @@ If a profile was created with the wrong agent kind, stop or unregister any match
 | Command | Effect |
 |---|---|
 | `/new`, `/reset` | Clear the current session |
+| `/new chat [name]` | Create a new group with a fresh session, inheriting the current chat's working directory |
+| `/new chat <path\|@alias> [name]` | Create a new group starting in an absolute / `~/` path or a named workspace, e.g. `/new chat ~/code/foo debug` or `/new chat @foo` |
 | `/cd <path>` | Switch working directory and reset the session |
 | `/ws list` | List named workspaces |
 | `/ws save <name>` | Save the current working directory as a named workspace |

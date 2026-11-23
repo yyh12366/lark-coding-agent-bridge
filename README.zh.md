@@ -138,6 +138,8 @@ lark-channel-bridge profile export <name> --include-secrets --yes
 | 命令 | 作用 |
 |---|---|
 | `/new`, `/reset` | 清空当前会话 |
+| `/new chat [name]` | 新建群和新会话，继承当前 chat 的工作目录 |
+| `/new chat <path\|@别名> [name]` | 按绝对路径 / `~/` 路径或命名工作空间新建群，例如 `/new chat ~/项目/foo 调试` 或 `/new chat @foo` |
 | `/cd <path>` | 切换工作目录并重置会话 |
 | `/ws list` | 列出命名工作空间 |
 | `/ws save <name>` | 把当前工作目录保存为命名工作空间 |

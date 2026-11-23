@@ -61,6 +61,51 @@ describe('Bridge command contracts', () => {
     await expect(realpath(h.tmp.workspace)).resolves.toBe(h.workspaces.cwdFor('chat-1'));
   });
 
+  it('creates a /new chat bound to a path, a workspace alias, or the inherited cwd', async () => {
+    const h = await createHarness();
+    const target = join(h.tmp.root, 'proj-a');
+    const file = join(h.tmp.workspace, 'not-a-directory.txt');
+    await mkdir(target, { recursive: true });
+    await writeFile(file, 'not a directory', 'utf8');
+    const targetReal = await realpath(target);
+    const inherited = h.workspaces.cwdFor('chat-1');
+
+    // Plain name keeps the original behaviour: inherit the current cwd.
+    await expect(h.run('/new chat my group')).resolves.toBe(true);
+    expect(h.channel.createdChats.at(-1)?.name).toBe('my group');
+    expect(h.workspaces.cwdFor(h.channel.createdChats.at(-1)!.chatId)).toBe(inherited);
+
+    // Explicit path with a name.
+    await expect(h.run(`/new chat ${target} debug audio`)).resolves.toBe(true);
+    let created = h.channel.createdChats.at(-1)!;
+    expect(created.name).toBe('debug audio');
+    expect(h.workspaces.cwdFor(created.chatId)).toBe(targetReal);
+    expect(h.workspaces.cwdFor('chat-1')).toBe(inherited);
+    expect(JSON.stringify(h.channel.sent.find((m) => m.chatId === created.chatId)?.content)).toContain(targetReal);
+
+    // Explicit path without a name defaults to the directory basename.
+    await expect(h.run(`/new chat ${target}`)).resolves.toBe(true);
+    created = h.channel.createdChats.at(-1)!;
+    expect(created.name.startsWith('proj-a · ')).toBe(true);
+
+    // Workspace alias.
+    h.workspaces.setCwd('chat-1', targetReal);
+    await expect(h.run('/ws save pa')).resolves.toBe(true);
+    h.workspaces.setCwd('chat-1', inherited!);
+    await expect(h.run('/new chat @pa')).resolves.toBe(true);
+    created = h.channel.createdChats.at(-1)!;
+    expect(created.name.startsWith('pa · ')).toBe(true);
+    expect(h.workspaces.cwdFor(created.chatId)).toBe(targetReal);
+
+    // Errors do not create a chat.
+    const before = h.channel.createdChats.length;
+    await expect(h.run('/new chat @missing')).resolves.toBe(true);
+    expect(lastMarkdown(h.channel)).toContain('未找到工作目录别名');
+    await expect(h.run(`/new chat ${file}`)).resolves.toBe(true);
+    expect(lastMarkdown(h.channel)).toContain('路径不是目录');
+    expect(h.channel.createdChats.length).toBe(before);
+  });
+
   it('scopes named workspaces by profile, scope, and owner', async () => {
     const h = await createHarness();
     const alternate = join(h.tmp.root, 'alternate');

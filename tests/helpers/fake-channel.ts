@@ -17,8 +17,15 @@ export interface FakeRawClientRequest {
   params: unknown;
 }
 
+export interface FakeCreatedChat {
+  chatId: string;
+  name: string;
+  inviteUserIds: string[];
+}
+
 export interface FakeChannel {
   readonly sent: FakeChannelMessage[];
+  readonly createdChats: FakeCreatedChat[];
   readonly streams: FakeChannelStream[];
   /**
    * Maps a messageId to the `thread_id` that `fetchRawMessage` should report
@@ -52,10 +59,12 @@ export interface FakeChannel {
   updateCardById(cardId: string, cardJson: unknown, sequence: number): Promise<void>;
   send(chatId: string, content: unknown, options?: unknown): Promise<{ messageId: string }>;
   stream(chatId: string, input: unknown, options?: unknown): Promise<void>;
+  createChat(opts: { name: string; inviteUserIds?: string[] }): Promise<{ chatId: string }>;
 }
 
 export function createFakeChannel(): FakeChannel {
   const sent: FakeChannelMessage[] = [];
+  const createdChats: FakeCreatedChat[] = [];
   const streams: FakeChannelStream[] = [];
   const requests: FakeRawClientRequest[] = [];
   const rawThreadIds = new Map<string, string>();
@@ -76,6 +85,12 @@ export function createFakeChannel(): FakeChannel {
 
   return {
     sent,
+    createdChats,
+    async createChat(opts: { name: string; inviteUserIds?: string[] }): Promise<{ chatId: string }> {
+      const chatId = `oc_fake_${createdChats.length + 1}`;
+      createdChats.push({ chatId, name: opts.name, inviteUserIds: opts.inviteUserIds ?? [] });
+      return { chatId };
+    },
     streams,
     rawThreadIds,
     async fetchRawMessage(messageId: string): Promise<Array<{ thread_id?: string }>> {

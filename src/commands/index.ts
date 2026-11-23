@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
-import { dirname, isAbsolute } from 'node:path';
+import { basename, dirname, isAbsolute } from 'node:path';
 import type { LarkChannel, NormalizedMessage } from '@larksuite/channel';
 import { claudeCapability, codexCapability } from '../agent/capability';
 import { DEFAULT_MODEL, normalizeModelSelection, supportedModels } from '../agent/models';
@@ -325,10 +325,11 @@ function isAbsoluteOrTilde(p: string): boolean {
 async function handleNew(args: string, ctx: CommandContext): Promise<void> {
   const trimmed = args.trim();
 
-  // /new chat [name]  — spin up a fresh group chat bound to a fresh session
+  // /new chat [<dir>|@<ws>] [name]  — spin up a fresh group chat bound to a
+  // fresh session, optionally starting in a given directory or named workspace.
   if (trimmed === 'chat' || trimmed.startsWith('chat ')) {
-    const rawName = trimmed === 'chat' ? '' : trimmed.slice(5).trim();
-    return handleNewChat(rawName, ctx);
+    const rest = trimmed === 'chat' ? '' : trimmed.slice(5).trim();
+    return handleNewChat(rest, ctx);
   }
 
   const wasRunning = ctx.activeRuns.interrupt(ctx.scope);
@@ -342,9 +343,58 @@ async function handleNew(args: string, ctx: CommandContext): Promise<void> {
   await reply(ctx, wasRunning ? '已中断当前任务并开始新会话。' : '已开始新会话。');
 }
 
-async function handleNewChat(rawName: string, ctx: CommandContext): Promise<void> {
-  const sourceCwd = effectiveWorkspaceCwd(ctx);
-  const name = rawName || defaultChatName(ctx.agent.displayName);
+type NewChatTarget =
+  | { kind: 'inherit'; rawName: string }
+  | { kind: 'dir'; cwd: string; label: string; rawName: string }
+  | { kind: 'error'; userVisible: string };
+
+/**
+ * Parse the argument of `/new chat`. The first token selects the starting
+ * directory when it is an absolute / `~` path or `@<workspace alias>`;
+ * otherwise the whole argument is the group name (original behaviour).
+ */
+async function resolveNewChatTarget(rest: string, ctx: CommandContext): Promise<NewChatTarget> {
+  const match = /^(\S+)\s*(.*)$/s.exec(rest);
+  const first = match?.[1] ?? '';
+  const remainder = (match?.[2] ?? '').trim();
+
+  let requested: string | undefined;
+  let label = '';
+  if (first.startsWith('@') && first.length > 1) {
+    const alias = first.slice(1);
+    requested = getWorkspaceAlias(ctx, alias);
+    if (!requested) {
+      return { kind: 'error', userVisible: `未找到工作目录别名：\`${alias}\`（用 \`/ws list\` 查看）` };
+    }
+    label = alias;
+  } else if (first && isAbsoluteOrTilde(first)) {
+    requested = expandTilde(first);
+  } else {
+    return { kind: 'inherit', rawName: rest };
+  }
+
+  const workspace = await resolveWorkingDirectory(requested);
+  if (!workspace.ok) return { kind: 'error', userVisible: workspace.userVisible };
+  return {
+    kind: 'dir',
+    cwd: workspace.cwdRealpath,
+    label: label || basename(workspace.cwdRealpath) || workspace.cwdRealpath,
+    rawName: remainder,
+  };
+}
+
+async function handleNewChat(rest: string, ctx: CommandContext): Promise<void> {
+  const target = await resolveNewChatTarget(rest, ctx);
+  if (target.kind === 'error') {
+    await reply(ctx, target.userVisible);
+    return;
+  }
+  const sourceCwd = target.kind === 'dir' ? target.cwd : effectiveWorkspaceCwd(ctx);
+  const name =
+    target.rawName ||
+    (target.kind === 'dir'
+      ? `${target.label} · ${defaultChatName(ctx.agent.displayName)}`
+      : defaultChatName(ctx.agent.displayName));
 
   let created;
   try {
@@ -359,15 +409,19 @@ async function handleNewChat(rawName: string, ctx: CommandContext): Promise<void
     return;
   }
 
-  // Inherit cwd from the originating chat so the new group starts in the
-  // same workspace; otherwise it'll fall back to $HOME.
+  // Bind the new group to the requested directory, or inherit the cwd of the
+  // originating chat; without either it falls back to the profile default.
   if (sourceCwd) {
     ctx.workspaces.setCwd(created.chatId, sourceCwd);
   }
 
   // Welcome the user inside the new group with a hint about how to start.
+  const cwdLine =
+    target.kind === 'dir'
+      ? `cwd：\`${sourceCwd}\``
+      : `cwd 继承自原群：\`${sourceCwd}\``;
   const welcome = sourceCwd
-    ? `🎉 群已建好，cwd 继承自原群：\`${sourceCwd}\`\n\n@我 + 任意消息开始对话。`
+    ? `🎉 群已建好，${cwdLine}\n\n@我 + 任意消息开始对话。`
     : '🎉 群已建好。\n\n@我 + 任意消息开始对话。';
   try {
     await ctx.channel.send(created.chatId, { markdown: welcome });
